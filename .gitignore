@@ -1,0 +1,8 @@
+node_modules
+build
+*.log
+ignore
+env
+*.env
+*.cpuprofile
+*.heapsnapshot
