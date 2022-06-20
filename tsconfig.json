@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "strictNullChecks": true,
+    "downlevelIteration": true,
+    "target": "esnext",
+    "moduleResolution": "node"
+    // "types": ["src/global.d.ts", "node"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.rsc"]
+}
