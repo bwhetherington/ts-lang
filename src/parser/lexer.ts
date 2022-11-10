@@ -57,6 +57,7 @@ export enum TokenKind {
   Comment = "Comment",
   Question = "Question",
   Exclamation = "Exclamation",
+  Type = "Type",
 }
 
 type TokenData =
@@ -279,6 +280,9 @@ type TokenData =
     }
   | {
       kind: TokenKind.Question;
+    }
+  | {
+      kind: TokenKind.Type;
     };
 
 export type Token = SpanData<TokenData>;
@@ -432,6 +436,7 @@ const WORD_SYMBOLS = createSymbolTokens({
   False: TokenKind.False,
   None: TokenKind.None,
   new: TokenKind.New,
+  type: TokenKind.Type,
 });
 
 export class Lexer {
@@ -530,13 +535,11 @@ export class Lexer {
     try {
       const ch = this.nextChar();
       if (ch === "/") {
-        console.log("start comment");
         const next = this.nextChar();
         if (next === "/") {
           return this.tryFinishLineComment();
         }
         if (next === "*") {
-          console.log("block comment");
           return this.tryFinishBlockComment();
         }
         this.index = start;

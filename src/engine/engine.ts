@@ -64,7 +64,7 @@ export class Engine {
     [ValueKind.List, NONE],
   ]);
 
-  private printer = new Printer();
+  public printer = new Printer();
 
   constructor() {
     this.context.parentContext = this.global;
@@ -86,17 +86,22 @@ export class Engine {
   }
 
   public init() {
-    this.global.set("println", intoValue((_self, ...strs) => {
-      const line = strs.map((val) => this.getPrintableString(val)).join(" ");
-      this.printer.println(line);
-      return NONE;
-    }));
-    this.global.set("print", intoValue((_self, ...strs) => {
+    this.global.set(
+      "__println__",
+      intoValue((_self, ...strs) => {
+        const line = strs.map((val) => this.getPrintableString(val)).join(" ");
+        this.printer.println(line);
+        return NONE;
+      })
+    );
+    this.global.set(
+      "__print__",
+      intoValue((_self, ...strs) => {
         const line = strs.map((val) => this.getPrintableString(val)).join(" ");
         this.printer.print(line);
         return NONE;
-      },
-    ));
+      })
+    );
     this.global.set("create_object", {
       kind: ValueKind.Builtin,
       value: (_self, proto, obj) => {
@@ -122,9 +127,9 @@ export class Engine {
     this.defineProtos();
 
     this.executeCore("core/class.rsc", classSrc);
-    // this.executeCore('core/io.rsc', ioSrc);
+    this.executeCore("core/io.rsc", ioSrc);
     this.executeCore("core/iter.rsc", iterSrc);
-    // this.executeCore('core/protos.rsc', protosSrc);
+    this.executeCore("core/protos.rsc", protosSrc);
 
     const fib = (val: number) => {
       if (val < 2) {
@@ -132,24 +137,31 @@ export class Engine {
       } else {
         return fib(val - 1) + fib(val - 2);
       }
-    }
+    };
 
-    this.global.set("fib_native", intoValue((_self, val) => {
-      const num = this.expectValue(val, ValueKind.Number).value;
-      return fib(num);
-    }));
+    this.global.set(
+      "fib_native",
+      intoValue((_self, val) => {
+        const num = this.expectValue(val, ValueKind.Number).value;
+        return fib(num);
+      })
+    );
   }
 
   private createNumberProto(): Value {
-    return NONE;
+    return intoValue({});
   }
 
   private createBooleanProto(): Value {
-    return NONE;
+    return intoValue({});
   }
 
   private createStringProto(): Value {
-    return NONE;
+    return intoValue({});
+  }
+
+  private createFunctionProto(): Value {
+    return intoValue({});
   }
 
   private expectValue<K>(
@@ -217,30 +229,30 @@ export class Engine {
     const boolProto = this.createBooleanProto();
     const strProto = this.createStringProto();
     const listProto = this.createListProto();
+    const fnProto = this.createFunctionProto();
 
     this.global.set("Number", numProto);
     this.global.set("Boolean", boolProto);
     this.global.set("String", strProto);
     this.global.set("List", listProto);
+    this.global.set("Function", fnProto);
 
     this.protos.set(ValueKind.Number, numProto);
     this.protos.set(ValueKind.Boolean, boolProto);
     this.protos.set(ValueKind.String, strProto);
     this.protos.set(ValueKind.List, listProto);
+    this.protos.set(ValueKind.Function, fnProto);
+    this.protos.set(ValueKind.Builtin, fnProto);
   }
 
   public executeModule(name: string, src: string): ObjectValue {
-    console.time();
     const mod = new ObjectValue();
     this.srcMap.set(name, src);
     const parser = new Parser(name, src);
     const body = parser.tryParseSource();
-    console.timeEnd();
-    console.time();
     this.executeBlock(State.Run, body, (name, value) => {
       mod.set(name, value);
     });
-    console.timeEnd();
     return mod;
   }
 
@@ -254,10 +266,11 @@ export class Engine {
   }
 
   public println(line: Value) {
+    this.printer;
     if (line.kind === ValueKind.String) {
-      console.log(line.value);
+      this.printer.println(line.value);
     } else {
-      console.log(valueToString(line));
+      this.printer.println(valueToString(line));
     }
   }
 
@@ -270,7 +283,6 @@ export class Engine {
       const iter = this.callMethod(value, "iter", []);
       while (true) {
         const val = this.callMethod(iter, "next", []);
-        console.log("val", val);
         if (compareValues(val, NONE)) {
           break;
         } else {
@@ -280,7 +292,10 @@ export class Engine {
     }
   }
 
-  private evaluateIdentifier(identifier: string): Value {
+  private evaluateIdentifier(identifier: string, allowSuper: boolean): Value {
+    if (!allowSuper && identifier === "super") {
+      throw this.createError("unexpected super");
+    }
     const value = this.context.get(identifier);
     if (value !== undefined) {
       return value;
@@ -372,6 +387,16 @@ export class Engine {
     return this.boolean(op(left.value, right.value));
   }
 
+  private evaluateEquals(x: Value, y: Value): boolean {
+    if (x.kind === ValueKind.None && y.kind === ValueKind.None) {
+      return true;
+    }
+    if (x.kind !== ValueKind.None && x.kind === y.kind) {
+      return x.value === y.value;
+    }
+    return false;
+  }
+
   private evaluateBinary(
     op: BinaryOperator,
     lhs: Expression,
@@ -403,9 +428,13 @@ export class Engine {
       case BinaryOperator.LessEqual:
         return this.evaluateNumericBoolean(lhs, rhs, (x, y) => x <= y);
       case BinaryOperator.Equals:
-        return this.evaluateNumericBoolean(lhs, rhs, (x, y) => x === y);
+        return this.boolean(
+          this.evaluateEquals(this.evaluate(lhs), this.evaluate(rhs))
+        );
       case BinaryOperator.NotEquals:
-        return this.evaluateNumericBoolean(lhs, rhs, (x, y) => x !== y);
+        return this.boolean(
+          !this.evaluateEquals(this.evaluate(lhs), this.evaluate(rhs))
+        );
       default:
         throw this.createError(`unknown operator: ${op}`);
     }
@@ -458,7 +487,7 @@ export class Engine {
     params: Spread<string[]>,
     context: Context,
     body: Statement[],
-    args: Value[],
+    args: Value[]
   ): Value {
     this.returnRegister = undefined;
     const oldContext = this.context;
@@ -522,11 +551,7 @@ export class Engine {
     return this.call(callable, self, argValues);
   }
 
-  private call(
-    callable: Value,
-    self: Value | undefined,
-    args: Value[],
-  ): Value {
+  private call(callable: Value, self: Value | undefined, args: Value[]): Value {
     switch (callable.kind) {
       case ValueKind.Builtin:
         return callable.value(self ?? NONE, ...args);
@@ -536,7 +561,7 @@ export class Engine {
           callable.value.params,
           callable.value.context,
           callable.value.body,
-          args,
+          args
         );
       default:
         throw this.createError("expected callable");
@@ -598,7 +623,7 @@ export class Engine {
   }
 
   private evaluateMember(subject: Expression, field: string): [Value, Value] {
-    const obj = this.evaluate(subject);
+    const obj = this.evaluate(subject, true);
     return this.getMember(obj, field, subject.span);
   }
 
@@ -607,7 +632,7 @@ export class Engine {
     _isOption: boolean,
     index: Expression
   ): Value {
-    const subjectValue = this.evaluate(subject);
+    const subjectValue = this.evaluate(subject, true);
     const indexValue = this.evaluate(index);
     return this.callMethod(
       subjectValue,
@@ -617,17 +642,25 @@ export class Engine {
     );
   }
 
-  private evaluateWithParent(expr: Expression): [Value, Value | undefined] {
+  private evaluateWithParent(
+    expr: Expression,
+    allowSuper: boolean = false
+  ): [Value, Value | undefined] {
     let res: [Value, Value | undefined];
     const lastItem = this.runStack[this.runStack.length - 1];
-    const isAlsoStatement = (lastItem?.data.kind === StatementKind.Expression) && lastItem.data.value === expr;
+    const isAlsoStatement =
+      lastItem?.data.kind === StatementKind.Expression &&
+      lastItem.data.value === expr;
     if (!isAlsoStatement) {
       this.runStack.push(expr);
     }
     try {
       switch (expr.data.kind) {
         case ExpressionKind.Identifier:
-          res = [this.evaluateIdentifier(expr.data.value), undefined];
+          res = [
+            this.evaluateIdentifier(expr.data.value, allowSuper),
+            undefined,
+          ];
           break;
         case ExpressionKind.Number:
           res = [this.number(expr.data.value), undefined];
@@ -664,9 +697,13 @@ export class Engine {
           ];
           break;
         case ExpressionKind.Lambda:
+          const { isSpread, subject } = expr.data.value.parameters;
           res = [
             this.evaluateLambda(
-              expr.data.value.parameters,
+              {
+                isSpread,
+                subject: subject.map((param) => param.name),
+              },
               expr.data.value.body
             ),
             undefined,
@@ -709,8 +746,8 @@ export class Engine {
     return res;
   }
 
-  public evaluate(expr: Expression): Value {
-    return this.evaluateWithParent(expr)[0];
+  public evaluate(expr: Expression, allowSuper: boolean = false): Value {
+    return this.evaluateWithParent(expr, allowSuper)[0];
   }
 
   private executeDeclaration(
@@ -757,8 +794,7 @@ export class Engine {
     state: State,
     cond: Expression,
     then: Statement[],
-    otherwise: Statement[],
-    exporter?: Exporter
+    otherwise: Statement[]
   ): State {
     const res = this.evaluate(cond);
     if (res.kind !== ValueKind.Boolean) {
@@ -766,9 +802,9 @@ export class Engine {
     }
     const isTrue = compareValues(res, TRUE);
     if (isTrue) {
-      return this.executeBlock(state, then, exporter);
+      return this.executeBlock(state, then);
     } else {
-      return this.executeBlock(state, otherwise, exporter);
+      return this.executeBlock(state, otherwise);
     }
   }
 
@@ -776,12 +812,14 @@ export class Engine {
     let out = "";
 
     for (let i = this.runStack.length - 1; i >= 0; i--) {
-      const {span} = this.runStack[i];
+      const { span } = this.runStack[i];
       const src = this.srcMap.get(span.source);
       if (!src) {
         break;
       }
-      out += `  at ${src.slice(span.start, span.end)} (${this.getSpanSummary(span)})\n`;
+      out += `  at ${src.slice(span.start, span.end)} (${this.getSpanSummary(
+        span
+      )})\n`;
     }
 
     return out;
@@ -838,6 +876,35 @@ export class Engine {
     return state;
   }
 
+  private executeLoop(state: State, body: Statement[]): State {
+    while (true) {
+      state = this.executeBlock(state, body);
+      if (state === State.Break || state === State.Return) {
+        break;
+      }
+    }
+    return state;
+  }
+
+  private executeForLoop(
+    state: State,
+    variable: string,
+    iterable: Expression,
+    body: Statement[]
+  ): State {
+    const iterator = this.evaluate(iterable);
+    for (const item of this.iterateValue(iterator)) {
+      this.context.descend();
+      this.context.set(variable, item);
+      state = this.executeBlock(state, body);
+      if (state === State.Break || state === State.Return) {
+        break;
+      }
+      this.context.ascend();
+    }
+    return state;
+  }
+
   public execute(state: State, stmt: Statement, exporter?: Exporter): State {
     const { span, data } = stmt;
     this.runStack.push(stmt);
@@ -863,8 +930,7 @@ export class Engine {
             state,
             data.value.condition,
             data.value.then,
-            data.value.otherwise,
-            exporter
+            data.value.otherwise
           );
           break;
         case StatementKind.Assignment:
@@ -872,6 +938,17 @@ export class Engine {
             state,
             data.value.lvalue,
             data.value.rvalue
+          );
+          break;
+        case StatementKind.Loop:
+          state = this.executeLoop(state, data.value.body);
+          break;
+        case StatementKind.For:
+          state = this.executeForLoop(
+            state,
+            data.value.variable,
+            data.value.iterable,
+            data.value.body
           );
           break;
         case StatementKind.Return:
@@ -895,7 +972,7 @@ export class Engine {
   public getSpanSummary(span: Span): string {
     const src = this.srcMap.get(span.source);
     if (!src) {
-      return '<unknown>';
+      return "<unknown>";
     }
 
     const [row, col] = getSpanPos(span, src);
@@ -916,7 +993,7 @@ export class Engine {
         console.log(lines[i]);
       }
       if (i === row) {
-        console.log("^".padStart(col));
+        console.log("^".padStart(col + 1));
       }
     }
   }

@@ -1,205 +1,99 @@
+
 [
   {
     "span": {
       "source": "test.rsc",
       "start": 0,
-      "end": 12
+      "end": 59
     },
     "data": {
       "kind": "Declaration",
       "value": {
         "isPublic": false,
-        "name": "Foo",
+        "name": "add",
         "value": {
           "span": {
             "source": "test.rsc",
             "start": 0,
-            "end": 12
-          },
-          "data": {
-            "kind": "Call",
-            "value": {
-              "subject": {
-                "span": {
-                  "source": "test.rsc",
-                  "start": 0,
-                  "end": 12
-                },
-                "data": {
-                  "kind": "Identifier",
-                  "value": "__define_class__"
-                }
-              },
-              "isOption": false,
-              "arguments": [
-                {
-                  "isSpread": false,
-                  "subject": {
-                    "span": {
-                      "source": "test.rsc",
-                      "start": 10,
-                      "end": 12
-                    },
-                    "data": {
-                      "kind": "Object",
-                      "value": []
-                    }
-                  }
-                }
-              ]
-            }
-          }
-        }
-      }
-    }
-  },
-  {
-    "span": {
-      "source": "test.rsc",
-      "start": 14,
-      "end": 32
-    },
-    "data": {
-      "kind": "Declaration",
-      "value": {
-        "isPublic": false,
-        "name": "Bar",
-        "value": {
-          "span": {
-            "source": "test.rsc",
-            "start": 14,
-            "end": 32
-          },
-          "data": {
-            "kind": "Call",
-            "value": {
-              "subject": {
-                "span": {
-                  "source": "test.rsc",
-                  "start": 14,
-                  "end": 32
-                },
-                "data": {
-                  "kind": "Identifier",
-                  "value": "__define_class__"
-                }
-              },
-              "isOption": false,
-              "arguments": [
-                {
-                  "isSpread": false,
-                  "subject": {
-                    "span": {
-                      "source": "test.rsc",
-                      "start": 30,
-                      "end": 32
-                    },
-                    "data": {
-                      "kind": "Object",
-                      "value": []
-                    }
-                  }
-                }
-              ]
-            }
-          }
-        }
-      }
-    }
-  },
-  {
-    "span": {
-      "source": "test.rsc",
-      "start": 34,
-      "end": 67
-    },
-    "data": {
-      "kind": "Assignment",
-      "value": {
-        "lvalue": {
-          "span": {
-            "source": "test.rsc",
-            "start": 34,
-            "end": 42
-          },
-          "data": {
-            "kind": "Member",
-            "value": {
-              "subject": {
-                "span": {
-                  "source": "test.rsc",
-                  "start": 34,
-                  "end": 37
-                },
-                "data": {
-                  "kind": "Identifier",
-                  "value": "Foo"
-                }
-              },
-              "isOption": false,
-              "member": "test"
-            }
-          }
-        },
-        "rvalue": {
-          "span": {
-            "source": "test.rsc",
-            "start": 45,
-            "end": 67
+            "end": 59
           },
           "data": {
             "kind": "Lambda",
             "value": {
               "parameters": {
                 "isSpread": false,
-                "subject": []
+                "subject": [
+                  {
+                    "name": "x",
+                    "type": {
+                      "span": {
+                        "source": "test.rsc",
+                        "start": 12,
+                        "end": 18
+                      },
+                      "data": {
+                        "kind": "Identifier",
+                        "data": "Number"
+                      }
+                    }
+                  },
+                  {
+                    "name": "y",
+                    "type": {
+                      "span": {
+                        "source": "test.rsc",
+                        "start": 23,
+                        "end": 29
+                      },
+                      "data": {
+                        "kind": "Identifier",
+                        "data": "Number"
+                      }
+                    }
+                  }
+                ]
               },
               "body": [
                 {
                   "span": {
                     "source": "test.rsc",
-                    "start": 51,
-                    "end": 67
+                    "start": 45,
+                    "end": 57
                   },
                   "data": {
                     "kind": "Return",
                     "value": {
                       "span": {
                         "source": "test.rsc",
-                        "start": 51,
-                        "end": 67
+                        "start": 52,
+                        "end": 57
                       },
                       "data": {
-                        "kind": "Call",
+                        "kind": "Binary",
                         "value": {
-                          "subject": {
+                          "op": "+",
+                          "lhs": {
                             "span": {
                               "source": "test.rsc",
-                              "start": 51,
-                              "end": 58
+                              "start": 52,
+                              "end": 53
                             },
                             "data": {
                               "kind": "Identifier",
-                              "value": "println"
+                              "value": "x"
                             }
                           },
-                          "isOption": false,
-                          "arguments": [
-                            {
-                              "isSpread": false,
-                              "subject": {
-                                "span": {
-                                  "source": "test.rsc",
-                                  "start": 59,
-                                  "end": 66
-                                },
-                                "data": {
-                                  "kind": "String",
-                                  "value": "Hello"
-                                }
-                              }
+                          "rhs": {
+                            "span": {
+                              "source": "test.rsc",
+                              "start": 56,
+                              "end": 57
+                            },
+                            "data": {
+                              "kind": "Identifier",
+                              "value": "y"
                             }
-                          ]
+                          }
                         }
                       }
                     }
@@ -208,107 +102,52 @@
               ]
             }
           }
-        }
-      }
-    }
-  },
-  {
-    "span": {
-      "source": "test.rsc",
-      "start": 69,
-      "end": 86
-    },
-    "data": {
-      "kind": "Declaration",
-      "value": {
-        "isPublic": false,
-        "name": "x",
-        "value": {
+        },
+        "type": {
           "span": {
             "source": "test.rsc",
-            "start": 77,
-            "end": 86
+            "start": 0,
+            "end": 59
           },
           "data": {
-            "kind": "Call",
-            "value": {
-              "subject": {
-                "span": {
-                  "source": "test.rsc",
-                  "start": 81,
-                  "end": 84
+            "kind": "Function",
+            "data": {
+              "parameters": [
+                {
+                  "span": {
+                    "source": "test.rsc",
+                    "start": 12,
+                    "end": 18
+                  },
+                  "data": {
+                    "kind": "Identifier",
+                    "data": "Number"
+                  }
                 },
-                "data": {
-                  "kind": "Member",
-                  "value": {
-                    "subject": {
-                      "span": {
-                        "source": "test.rsc",
-                        "start": 81,
-                        "end": 84
-                      },
-                      "data": {
-                        "kind": "Identifier",
-                        "value": "Bar"
-                      }
-                    },
-                    "isOption": false,
-                    "member": "new"
+                {
+                  "span": {
+                    "source": "test.rsc",
+                    "start": 23,
+                    "end": 29
+                  },
+                  "data": {
+                    "kind": "Identifier",
+                    "data": "Number"
                   }
                 }
-              },
-              "isOption": false,
-              "arguments": []
-            }
-          }
-        }
-      }
-    }
-  },
-  {
-    "span": {
-      "source": "test.rsc",
-      "start": 87,
-      "end": 95
-    },
-    "data": {
-      "kind": "Expression",
-      "value": {
-        "span": {
-          "source": "test.rsc",
-          "start": 87,
-          "end": 95
-        },
-        "data": {
-          "kind": "Call",
-          "value": {
-            "subject": {
-              "span": {
-                "source": "test.rsc",
-                "start": 87,
-                "end": 93
-              },
-              "data": {
-                "kind": "Member",
-                "value": {
-                  "subject": {
-                    "span": {
-                      "source": "test.rsc",
-                      "start": 87,
-                      "end": 88
-                    },
-                    "data": {
-                      "kind": "Identifier",
-                      "value": "x"
-                    }
-                  },
-                  "isOption": false,
-                  "member": "test"
+              ],
+              "output": {
+                "span": {
+                  "source": "test.rsc",
+                  "start": 32,
+                  "end": 38
+                },
+                "data": {
+                  "kind": "Identifier",
+                  "data": "Number"
                 }
               }
-            },
-            "isOption": false,
-            "arguments": []
+            }
           }
         }
       }

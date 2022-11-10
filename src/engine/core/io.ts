@@ -4,7 +4,6 @@ pub func print(...xs) {
 }
 
 pub func println(...xs) {
-  print(...xs)
-  __print__("\n")
+  __println__(...xs)
 }
 `;

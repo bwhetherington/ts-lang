@@ -16,6 +16,12 @@ pub func __define_class__(NewClass) {
 }
 
 pub func __extend_class__(Base, NewClass) {
+  return create_object(Base, NewClass)
+}
+`;
+
+/*
+pub func __extend_class__(Base, NewClass) {
   return __define_class__(create_object(NewClass, {
     create() {
       let base_instance = create_object(Base, NewClass)
@@ -23,4 +29,4 @@ pub func __extend_class__(Base, NewClass) {
     },
   }))
 }
-`;
+*/

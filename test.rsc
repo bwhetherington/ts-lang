@@ -1,10 +1,6 @@
-func fibonacci(n: Number) -> Number {
-    let n = n
-    if n < 2 {
-        return n
-    } else {
-        return fibonacci(n - 1) + fibonacci(n - 2)
-    }
+for x in [1, 2, 3] {
+    println(x)
+    break
 }
 
-println(fib_native(30))
+println("done")

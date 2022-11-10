@@ -1,5 +1,6 @@
 import * as readline from "readline";
 import { Engine, State } from "./engine/engine";
+import { ValueKind } from "./engine/value";
 import { Parser, StatementKind } from "./parser/parser";
 import { Span } from "./parser/util";
 
@@ -21,13 +22,15 @@ export async function repl() {
 
   try {
     while (true) {
-      const res = await prompt("> ");
+      const res = await prompt(">>> ");
       try {
         const parser = new Parser("<stdin>", res);
         const statement = parser.tryParseStatement();
         if (statement.data.kind === StatementKind.Expression) {
           const res = engine.evaluate(statement.data.value);
-          engine.println(res);
+          if (res.kind !== ValueKind.None) {
+            engine.println(res);
+          }
         } else {
           engine.execute(State.Run, statement);
         }
@@ -38,7 +41,6 @@ export async function repl() {
           console.error(ex.message);
           console.error(engine.getStackTrace());
         }
-        // console.log(ex.stack);
       }
     }
   } finally {

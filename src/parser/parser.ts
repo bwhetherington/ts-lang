@@ -1,5 +1,6 @@
 import { Lexer, Token, TokenKind } from "./lexer";
 import { ParseError, Span, SpanData } from "./util";
+import { PRIMITIVE_TYPES, Type, TypeData, TypeKind } from "./types";
 
 export enum StatementKind {
   Declaration = "Declaration",
@@ -7,10 +8,12 @@ export enum StatementKind {
   Expression = "Expression",
   If = "If",
   Loop = "Loop",
+  For = "For",
   Break = "Break",
   Continue = "Continue",
   Return = "Return",
   Block = "Block",
+  TypeDeclaration = "TypeDeclaration",
 }
 
 type StatementData =
@@ -20,6 +23,14 @@ type StatementData =
         name: string;
         isPublic: boolean;
         value: Expression;
+      };
+    }
+  | {
+      kind: StatementKind.TypeDeclaration;
+      value: {
+        name: string;
+        isPublic: boolean;
+        value: Type;
       };
     }
   | {
@@ -36,6 +47,14 @@ type StatementData =
   | {
       kind: StatementKind.Loop;
       value: {
+        body: Statement[];
+      };
+    }
+  | {
+      kind: StatementKind.For;
+      value: {
+        variable: string;
+        iterable: Expression;
         body: Statement[];
       };
     }
@@ -165,6 +184,11 @@ export interface Spread<T> {
   isSpread: boolean;
 }
 
+export interface Parameter {
+  name: string;
+  type?: Type;
+}
+
 type ExpressionData =
   | {
       kind: ExpressionKind.Number;
@@ -217,7 +241,7 @@ type ExpressionData =
   | {
       kind: ExpressionKind.Lambda;
       value: {
-        parameters: Spread<string[]>;
+        parameters: Spread<Parameter[]>;
         body: Statement[];
       };
     }
@@ -292,6 +316,99 @@ export class Parser {
   private peekToken(): Token | undefined {
     const token = this.tokens[this.index];
     return token;
+  }
+
+  private tryParseTypeDeclaration(): Statement {
+    return this.tryParse(() => {
+      const start = this.index;
+      const isPublic = this.tryParsePublic();
+      this.skipWhitespace();
+      this.tryParseToken(TokenKind.Type);
+      this.skipWhitespace();
+      const { data: name } = this.tryParseIdentifierString();
+      this.skipWhitespace();
+      this.tryParseToken(TokenKind.Assign);
+      this.skipWhitespace();
+      const value = this.tryParseType();
+
+      return {
+        span: {
+          source: this.name,
+          start: this.tokens[start].span.start,
+          end: value.span.end,
+        },
+        data: {
+          kind: StatementKind.TypeDeclaration,
+          value: {
+            isPublic,
+            name,
+            value,
+          },
+        },
+      };
+    });
+  }
+
+  private tryParseIdentifierType(): Type {
+    return this.tryParse(() => {
+      const ident = this.tryParseIdentifierString();
+      return {
+        span: ident.span,
+        data: {
+          kind: TypeKind.Identifier,
+          data: ident.data,
+        },
+      };
+    });
+  }
+
+  private tryParseFunctionType(): Type {
+    return this.tryParse(() => {
+      const params = this.tryParseSeparated<Type>(
+        TokenKind.OpenParen,
+        TokenKind.CloseParen,
+        this.tryParseComma.bind(this),
+        this.tryParseType.bind(this)
+      );
+      this.skipWhitespace();
+      this.tryParseToken(TokenKind.Arrow);
+      this.skipWhitespace();
+      const output = this.tryParseType();
+      return {
+        span: this.joinSpans(params.span, output.span),
+        data: {
+          kind: TypeKind.Function,
+          data: {
+            parameters: params.data,
+            output,
+          },
+        },
+      };
+    });
+  }
+
+  private tryParseType(): Type {
+    return this.tryParsers([
+      this.tryParseFunctionType.bind(this),
+      this.tryParseIdentifierType.bind(this),
+    ]);
+  }
+
+  private tryParseOptionalTypeAnnotation(): Type | undefined {
+    return this.tryParse(() => {
+      const start = this.index;
+      this.skipWhitespace();
+      const token = this.peekToken();
+      if (token?.data?.kind === TokenKind.Colon) {
+        this.nextToken();
+        this.skipWhitespace();
+        const type = this.tryParseType();
+        return type;
+      } else {
+        this.index = start;
+      }
+      return undefined;
+    });
   }
 
   private tryParseNumber(): Expression {
@@ -490,36 +607,72 @@ export class Parser {
     });
   }
 
-  private tryParseParameter(): Spread<string> {
+  private tryParseSpread<T>(parser: () => T): Spread<T> {
     return this.tryParse(() => {
       const token = this.nextToken();
-
       let isSpread = false;
       if (token.data.kind === TokenKind.Spread) {
         isSpread = true;
       } else {
         this.index -= 1;
       }
-
-      const identifier = this.nextToken();
-      if (identifier.data.kind === TokenKind.Identifier) {
-        return {
-          isSpread,
-          subject: identifier.data.value,
-        };
-      } else {
-        throw this.createError("expected identifier", identifier.span);
-      }
+      const val = parser();
+      return {
+        isSpread,
+        subject: val,
+      };
     });
   }
 
-  private tryParseParameters(): SpanData<Spread<string[]>> {
+  private tryParseParameter(): Parameter {
+    return this.tryParsers([
+      this.tryParseTypedParameter.bind(this),
+      this.tryParseUntypedParameter.bind(this),
+    ]);
+  }
+
+  private tryParseSpreadParameter(): Spread<Parameter> {
+    return this.tryParseSpread(this.tryParseParameter.bind(this));
+  }
+
+  private tryParseUntypedParameter(): Parameter {
     return this.tryParse(() => {
-      const params = this.tryParseSeparated<Spread<string>>(
+      const identifier = this.nextToken();
+      if (identifier.data.kind !== TokenKind.Identifier) {
+        throw this.createError("expected identifier", identifier.span);
+      }
+      return {
+        name: identifier.data.value,
+      };
+    });
+  }
+
+  private tryParseTypedParameter(): Parameter {
+    return this.tryParse(() => {
+      const identifier = this.nextToken();
+      if (identifier.data.kind !== TokenKind.Identifier) {
+        throw this.createError("expected identifier", identifier.span);
+      }
+
+      this.skipWhitespace();
+      this.tryParseToken(TokenKind.Colon);
+      this.skipWhitespace();
+      const type = this.tryParseType();
+
+      return {
+        name: identifier.data.value,
+        type,
+      };
+    });
+  }
+
+  private tryParseParameters(): SpanData<Spread<Parameter[]>> {
+    return this.tryParse(() => {
+      const params = this.tryParseSeparated<Spread<Parameter>>(
         TokenKind.OpenParen,
         TokenKind.CloseParen,
         this.tryParseComma.bind(this),
-        this.tryParseParameter.bind(this)
+        this.tryParseSpreadParameter.bind(this)
       );
 
       const spreads = params.data;
@@ -634,7 +787,7 @@ export class Parser {
         data: {
           kind: ExpressionKind.Identifier,
           value: name.data,
-        }
+        },
       };
       return {
         span: name.span,
@@ -736,12 +889,21 @@ export class Parser {
     baseClass: Expression,
     body: Expression
   ): Statement {
-    const defineClassCall = this.createFunctionCall(span, "__define_class__", [
-      {
-        isSpread: false,
-        subject: body,
-      },
-    ]);
+    let defineClassCall: Expression;
+
+    if (baseClass.data.kind === ExpressionKind.None) {
+      // Base class
+      defineClassCall = this.createFunctionCall(span, "__define_class__", [
+        { isSpread: false, subject: body },
+      ]);
+    } else {
+      // Subclass
+      defineClassCall = this.createFunctionCall(span, "__extend_class__", [
+        { isSpread: false, subject: baseClass },
+        { isSpread: false, subject: body },
+      ]);
+    }
+
     return {
       span,
       data: {
@@ -851,7 +1013,7 @@ export class Parser {
       this.skipWhitespace();
       this.tryParseToken(TokenKind.Let);
       this.skipWhitespace();
-      const { data: name } = this.tryParseIdentifierString();
+      const { name } = this.tryParseParameter();
       this.skipWhitespace();
       this.tryParseToken(TokenKind.Assign);
       this.skipWhitespace();
@@ -886,12 +1048,44 @@ export class Parser {
       this.skipWhitespace();
       const parameters = this.tryParseParameters();
       this.skipWhitespace();
+
+      let output = this.tryParseOptionalTypeAnnotation();
+      if (!output) {
+        output = {
+          span: parameters.span,
+          data: PRIMITIVE_TYPES.any,
+        };
+      }
+      this.skipWhitespace();
+
       const body = this.tryParseBody();
 
       const span = {
         source: this.name,
         start,
         end: body.span.end,
+      };
+
+      const paramTypes = parameters.data.subject.map((parameter) => {
+        if (parameter.type) {
+          return parameter.type;
+        } else {
+          return {
+            span: parameters.span,
+            data: PRIMITIVE_TYPES.any,
+          };
+        }
+      });
+
+      const functionType: Type = {
+        span,
+        data: {
+          kind: TypeKind.Function,
+          data: {
+            parameters: paramTypes,
+            output: output,
+          },
+        },
       };
 
       const lambda: Expression = {
@@ -913,6 +1107,7 @@ export class Parser {
             isPublic,
             name: name.data,
             value: lambda,
+            type: functionType,
           },
         },
       };
@@ -1549,6 +1744,13 @@ export class Parser {
         end: body.span.end,
       };
 
+      // for x in xs {
+      //   do_something(x)
+      // }
+
+      // loop {
+      //   let x = xs.next()
+      // }
       const desugaredLoopBody: Statement[] = [
         // Create the loop variable
         {
@@ -1618,12 +1820,24 @@ export class Parser {
       return {
         span: totalSpan,
         data: {
-          kind: StatementKind.Block,
+          kind: StatementKind.For,
           value: {
-            body: desugaredBlock,
+            variable: varName.data,
+            iterable,
+            body: body.data,
           },
         },
       };
+
+      // return {
+      //   span: totalSpan,
+      //   data: {
+      //     kind: StatementKind.Block,
+      //     value: {
+      //       body: desugaredBlock,
+      //     },
+      //   },
+      // };
     });
   }
 
@@ -1719,6 +1933,7 @@ export class Parser {
       this.tryParseWhileLoop.bind(this),
       this.tryParseLoop.bind(this),
       this.tryParseDeclaration.bind(this),
+      this.tryParseTypeDeclaration.bind(this),
       this.tryParseReturn.bind(this),
       this.tryParseFunction.bind(this),
       this.tryParseBreak.bind(this),
