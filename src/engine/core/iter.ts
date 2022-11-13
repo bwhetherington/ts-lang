@@ -35,31 +35,34 @@ pub class Iterator {
   }
 
   filter(f) {
-    return Filter.new(self, f)
+    return FilterIterator.new(self, f)
   }
   map(f) {
-    return Map.new(self, f)
+    return MapIterator.new(self, f)
   }
   flat_map(f) {
-    return FlatMap.new(self, f)
+    return FlatMapIterator.new(self, f)
   }
   skip(amount) {
-    return Skip.new(self, amount)
+    return SkipIterator.new(self, amount)
   }
   enumerate() {
     return Enumerate.new(self)
   }
   take(amount) {
-    return Take.new(self, amount)
+    return TakeIterator.new(self, amount)
   }
   take_while(f) {
-    return TakeWhile.new(self, f)
+    return TakeWhileIterator.new(self, f)
   }
   zip_with(b, f) {
-    return ZipWith.new(self, b.iter(), f)
+    return ZipWithIterator.new(self, b.iter(), f)
   }
   zip(b) {
     return self.zip_with(b, zip_vals)
+  }
+  slice(from, to) {
+    return self.skip(from).take(to - from)
   }
 }
 
@@ -79,7 +82,7 @@ pub class Range : Iterator {
   }
 }
 
-class Filter : Iterator {
+class FilterIterator : Iterator {
   init(base, pred) {
     self.base_ = base
     self.pred_ = pred
@@ -95,7 +98,7 @@ class Filter : Iterator {
   }
 }
 
-class Map : Iterator {
+class MapIterator : Iterator {
   init(base, f) {
     super.init()
     self.base_ = base
@@ -110,7 +113,7 @@ class Map : Iterator {
   }
 }
 
-class FlatMap : Iterator {
+class FlatMapIterator : Iterator {
   init(base, f) {
     super.init()
     self.base_ = base
@@ -135,7 +138,7 @@ class FlatMap : Iterator {
   }
 }
 
-class Skip : Iterator {
+class SkipIterator : Iterator {
   init(base, amount) {
     super.init()
     self.base_ = base
@@ -149,7 +152,7 @@ class Skip : Iterator {
   }
 }
 
-class Enumerate : Iterator {
+class EnumerateIterator : Iterator {
   init(base) {
     super.init()
     self.base_ = base
@@ -169,7 +172,7 @@ class Enumerate : Iterator {
   }
 }
 
-class TakeWhile : Iterator {
+class TakeWhileIterator : Iterator {
   init(base, f) {
     super.init()
     self.base_ = base
@@ -189,7 +192,7 @@ class TakeWhile : Iterator {
   }
 }
 
-class Take : Iterator {
+class TakeIterator : Iterator {
   init(base, num) {
     super.init()
     self.base_ = base
@@ -204,7 +207,7 @@ class Take : Iterator {
   }
 }
 
-class Zip : Iterator {
+class ZipIterator : Iterator {
   init(a, b) {
     self.iter_a_ = a
     self.iter_b_ = b
@@ -219,7 +222,7 @@ class Zip : Iterator {
   }
 }
 
-class ZipWith : Iterator {
+class ZipWithIterator : Iterator {
   init(a, b, f) {
     super.init()
     self.iter_a_ = a
@@ -236,6 +239,22 @@ class ZipWith : Iterator {
   }
 }
 
+class FunctionIterator : Iterator {
+  init(fn) {
+      self.fn_ = fn
+      self.is_done_ = False
+  }
+
+  next() {
+      if self.is_done_ {
+          return None
+      }
+      let res = self.fn_()
+      self.is_done_ = res == None
+      return res
+  }
+}
+
 func zip_vals(a, b) {
   return [a, b]
 }
@@ -244,7 +263,26 @@ func list_iter(xs) {
   return Range.new(0, xs.len()).map((i) => xs[i])
 }
 
+class ListIterator : Iterator {
+  init(list) {
+    self.list_ = list
+    self.index_ = 0
+  }
+
+  next() {
+    if self.index_ < self.list_.len() {
+      let val = self.list_[self.index_]
+      self.index_ += 1
+      return val
+    }
+  }
+}
+
 List.iter = () => {
-  return Range.new(0, self.len()).map((i) => self[i])
+  return ListIterator.new(self)
+}
+
+Function.iter = () => {
+  return FunctionIterator.new(self)
 }
 `;

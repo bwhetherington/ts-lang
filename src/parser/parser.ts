@@ -1,19 +1,21 @@
 import { Lexer, Token, TokenKind } from "./lexer";
 import { ParseError, Span, SpanData } from "./util";
 import { PRIMITIVE_TYPES, Type, TypeData, TypeKind } from "./types";
+import { ValueKind } from "../engine/value";
 
 export enum StatementKind {
-  Declaration = "Declaration",
-  Assignment = "Assignment",
-  Expression = "Expression",
-  If = "If",
-  Loop = "Loop",
-  For = "For",
-  Break = "Break",
-  Continue = "Continue",
-  Return = "Return",
-  Block = "Block",
-  TypeDeclaration = "TypeDeclaration",
+  Declaration,
+  Assignment,
+  Expression,
+  If,
+  Loop,
+  For,
+  While,
+  Break,
+  Continue,
+  Return,
+  Block,
+  TypeDeclaration,
 }
 
 type StatementData =
@@ -59,6 +61,13 @@ type StatementData =
       };
     }
   | {
+      kind: StatementKind.While;
+      value: {
+        condition: Expression;
+        body: Statement[];
+      };
+    }
+  | {
       kind: StatementKind.If;
       value: {
         condition: Expression;
@@ -86,26 +95,28 @@ type StatementData =
 export type Statement = SpanData<StatementData>;
 
 export enum BinaryOperator {
-  Plus = "+",
-  Minus = "-",
-  Times = "*",
-  Divide = "/",
-  Modulo = "%",
-  Raise = "^",
-  Equals = "==",
-  NotEquals = "!=",
-  Greater = ">",
-  GreaterEqual = ">=",
-  Less = "<",
-  LessEqual = "<=",
-  And = "&&",
-  Or = "||",
+  Plus,
+  Minus,
+  Times,
+  Divide,
+  Modulo,
+  Raise,
+  Equals,
+  RefEquals,
+  NotEquals,
+  NotRefEquals,
+  Greater,
+  GreaterEqual,
+  Less,
+  LessEqual,
+  And,
+  Or,
 }
 
 export enum UnaryOperator {
-  Plus = "+",
-  Minus = "-",
-  Not = "!",
+  Plus,
+  Minus,
+  Not,
 }
 
 const UNARY_TOKENS = {
@@ -118,6 +129,8 @@ const OPERATOR_PRECEDENCE = {
   [BinaryOperator.Or]: 0,
   [BinaryOperator.And]: 1,
   [BinaryOperator.Equals]: 2,
+  [BinaryOperator.RefEquals]: 2,
+  [BinaryOperator.NotRefEquals]: 2,
   [BinaryOperator.NotEquals]: 2,
   [BinaryOperator.Greater]: 2,
   [BinaryOperator.GreaterEqual]: 2,
@@ -139,6 +152,8 @@ const TOKEN_TO_OPERATOR = {
   [TokenKind.Modulo]: BinaryOperator.Modulo,
   [TokenKind.Raise]: BinaryOperator.Raise,
   [TokenKind.Equals]: BinaryOperator.Equals,
+  [TokenKind.RefEquals]: BinaryOperator.RefEquals,
+  [TokenKind.NotRefEquals]: BinaryOperator.NotRefEquals,
   [TokenKind.NotEquals]: BinaryOperator.NotEquals,
   [TokenKind.Greater]: BinaryOperator.Greater,
   [TokenKind.GreaterEqual]: BinaryOperator.GreaterEqual,
@@ -164,19 +179,20 @@ function getOperatorFromToken(token: TokenKind): BinaryOperator | undefined {
 }
 
 export enum ExpressionKind {
-  Number = "Number",
-  Boolean = "Boolean",
-  String = "String",
-  Identifier = "Identifier",
-  List = "List",
-  Object = "Object",
-  Call = "Call",
-  Member = "Member",
-  Index = "Index",
-  Lambda = "Lambda",
-  None = "None",
-  Binary = "Binary",
-  Unary = "Unary",
+  Number,
+  Boolean,
+  String,
+  Identifier,
+  List,
+  Object,
+  Call,
+  Member,
+  Index,
+  Lambda,
+  None,
+  Binary,
+  Unary,
+  FormatString,
 }
 
 export interface Spread<T> {
@@ -188,6 +204,21 @@ export interface Parameter {
   name: string;
   type?: Type;
 }
+
+enum FormatTokenKind {
+  Expression,
+  String,
+}
+
+type FormatTokenData =
+  | {
+      kind: FormatTokenKind.Expression;
+      value: Expression;
+    }
+  | {
+      kind: FormatTokenKind.String;
+      value: string;
+    };
 
 type ExpressionData =
   | {
@@ -202,6 +233,10 @@ type ExpressionData =
       kind: ExpressionKind.String;
       value: string;
     }
+  // | {
+  //     kind: ExpressionKind.FormatString;
+  //     value: FormatTokenData[];
+  //   }
   | {
       kind: ExpressionKind.Identifier;
       value: string;
@@ -882,6 +917,16 @@ export class Parser {
     };
   }
 
+  private createString(str: string, span: Span): Expression {
+    return {
+      span,
+      data: {
+        kind: ExpressionKind.String,
+        value: str,
+      },
+    };
+  }
+
   private createClassDeclaration(
     span: Span,
     isPublic: boolean,
@@ -894,13 +939,15 @@ export class Parser {
     if (baseClass.data.kind === ExpressionKind.None) {
       // Base class
       defineClassCall = this.createFunctionCall(span, "__define_class__", [
-        { isSpread: false, subject: body },
+        body,
+        this.createString(name, span),
       ]);
     } else {
       // Subclass
       defineClassCall = this.createFunctionCall(span, "__extend_class__", [
-        { isSpread: false, subject: baseClass },
-        { isSpread: false, subject: body },
+        baseClass,
+        body,
+        this.createString(name, span),
       ]);
     }
 
@@ -1614,27 +1661,6 @@ export class Parser {
       this.skipWhitespace();
       const body = this.tryParseBody();
 
-      const conditionSpan = condition.span;
-
-      const conditionCheck: Statement = {
-        span: conditionSpan,
-        data: {
-          kind: StatementKind.If,
-          value: {
-            condition,
-            then: [
-              {
-                span: conditionSpan,
-                data: { kind: StatementKind.Break },
-              },
-            ],
-            otherwise: [],
-          },
-        },
-      };
-
-      const desugaredBody = [conditionCheck, ...body.data];
-
       return {
         span: {
           source: this.name,
@@ -1642,20 +1668,37 @@ export class Parser {
           end: body.span.end,
         },
         data: {
-          kind: StatementKind.Loop,
+          kind: StatementKind.While,
           value: {
-            body: desugaredBody,
+            condition,
+            body: body.data,
           },
         },
       };
     });
   }
 
+  private static isSpreadExpression(
+    item: Expression | Spread<Expression>
+  ): item is Spread<Expression> {
+    if (item.hasOwnProperty("isSpread")) {
+      return true;
+    }
+    return false;
+  }
+
   private createFunctionCall(
     span: Span,
     func: string,
-    args: Spread<Expression>[]
+    args: (Expression | Spread<Expression>)[]
   ): Expression {
+    const spreadArgs = args.map((arg) => {
+      if (Parser.isSpreadExpression(arg)) {
+        return arg;
+      } else {
+        return { isSpread: false, subject: arg };
+      }
+    });
     return {
       span,
       data: {
@@ -1669,7 +1712,7 @@ export class Parser {
             },
           },
           isOption: false,
-          arguments: args,
+          arguments: spreadArgs,
         },
       },
     };

@@ -10,10 +10,9 @@ const FILE = process.argv[2];
 async function main() {
   const engine = new Engine();
   try {
-    engine.init();
+    engine.init(".");
     if (FILE) {
-      const src = await fs.readFile(FILE, "utf-8");
-      engine.executeModule(FILE, src);
+      engine.runFile(FILE);
     }
 
     if (!FILE || process.argv.includes("-i")) {
@@ -25,7 +24,7 @@ async function main() {
       engine.printSpan(span);
       console.error(ex.message);
     }
-    console.log(engine.getStackTrace());
+    // console.log(engine.getStackTrace());
   }
 }
 

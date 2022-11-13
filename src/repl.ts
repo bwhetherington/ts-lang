@@ -3,6 +3,7 @@ import { Engine, State } from "./engine/engine";
 import { ValueKind } from "./engine/value";
 import { Parser, StatementKind } from "./parser/parser";
 import { Span } from "./parser/util";
+import clc from "cli-color";
 
 function promptHigh(rl: readline.Interface, query: string): Promise<string> {
   return new Promise((resolve) => rl.question(query, (res) => resolve(res)));
@@ -17,12 +18,15 @@ export async function repl() {
   const prompt = promptHigh.bind(null, rl);
 
   const engine = new Engine();
-  engine.init();
+  engine.init(".");
   engine.context.descend();
 
   try {
     while (true) {
       const res = await prompt(">>> ");
+      if (res.trim().length === 0) {
+        continue;
+      }
       try {
         const parser = new Parser("<stdin>", res);
         const statement = parser.tryParseStatement();

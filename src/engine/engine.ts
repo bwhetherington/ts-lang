@@ -27,6 +27,8 @@ import ioSrc from "./core/io";
 import iterSrc from "./core/iter";
 import protosSrc from "./core/protos";
 import { Printer } from "./printer";
+import { readFileSync } from "fs";
+import { Resolver } from "./resolver";
 
 type Exporter = (name: string, value: Value) => void;
 
@@ -54,8 +56,8 @@ export class Engine {
   private returnRegister?: Value;
 
   private runStack: Runnable[] = [];
-
   private srcMap: Map<string, string> = new Map();
+  private resolver: Resolver = new Resolver(".");
 
   private protos: Map<ValueKind, Value> = new Map([
     [ValueKind.Number, NONE],
@@ -63,6 +65,19 @@ export class Engine {
     [ValueKind.String, NONE],
     [ValueKind.List, NONE],
   ]);
+
+  private protoHashes: Map<ValueKind, number> = new Map();
+
+  private operatorMethods: Map<BinaryOperator, string> = new Map([
+    [BinaryOperator.Plus, "plus"],
+    [BinaryOperator.Minus, "minus"],
+    [BinaryOperator.Times, "times"],
+    [BinaryOperator.Divide, "divide"],
+    [BinaryOperator.Modulo, "modulo"],
+    [BinaryOperator.Raise, "exponentiate"],
+  ]);
+
+  private moduleCache: Map<string, ObjectValue> = new Map();
 
   public printer = new Printer();
 
@@ -78,14 +93,160 @@ export class Engine {
     return new EvalError(this.getLastSpan(), message);
   }
 
-  private getPrintableString(value: Value): string {
+  private getPrintableDebugString(value: Value): string {
     if (value.kind === ValueKind.String) {
       return value.value;
     }
     return valueToString(value);
   }
 
-  public init() {
+  private getPrintableString(value: Value): string {
+    if (value.kind === ValueKind.String) {
+      return value.value;
+    }
+    return this.stringify(value);
+  }
+
+  public runFile(path: string) {
+    const oldResolver = this.resolver;
+    try {
+      const { target, resolver } = this.resolver.resolve(path);
+      this.resolver = resolver;
+      const content = readFileSync(target, "utf8");
+      this.executeModule(this.resolver.getFileName(), content);
+    } finally {
+      this.resolver = oldResolver;
+    }
+  }
+
+  private importModule(path: string): ObjectValue {
+    const oldResolver = this.resolver;
+    const { target, resolver } = this.resolver.resolve(path);
+
+    const cached = this.moduleCache.get(target);
+    if (cached) {
+      return cached;
+    }
+
+    const file = readFileSync(target, "utf8");
+
+    // Switch to local resolver for local imports
+    this.resolver = resolver;
+
+    try {
+      const module = this.executeModule(this.resolver.getFileName(), file);
+      this.moduleCache.set(target, module);
+      return module;
+    } finally {
+      this.resolver = oldResolver;
+    }
+  }
+
+  private defineProto(proto: Value, name: string) {
+    this.global.set(name, proto);
+  }
+
+  private hashString(str: string): number {
+    let total = this.protoHashes.get(ValueKind.String) ?? 0;
+    for (let i = 0; i < str.length; i += 1) {
+      total += str.charCodeAt(i);
+    }
+    return total;
+  }
+
+  private hashList(list: Value[]): number {
+    let total = this.protoHashes.get(ValueKind.List) ?? 0;
+    for (let i = 0; i < list.length; i += 1) {
+      total += this.hashCode(list[i]);
+    }
+    return total;
+  }
+
+  private hashBoolean(bool: boolean): number {
+    return (this.protoHashes.get(ValueKind.Boolean) ?? 0) + (bool ? 1 : 0);
+  }
+
+  private wrapObject(obj: ObjectValue): Value {
+    return { kind: ValueKind.Object, value: obj };
+  }
+
+  private hashObject(obj: ObjectValue): number {
+    const res = this.tryCallMethod(this.wrapObject(obj), "hash_code", []);
+    if (res !== null) {
+      return this.expectValue(res, ValueKind.Number).value;
+    }
+    let total = this.protoHashes.get(ValueKind.Object) ?? 0;
+    for (const [key, value] of obj.entries()) {
+      total += this.hashString(key) + this.hashCode(value);
+    }
+    return total;
+  }
+
+  private hashFunction(params: string[], body: Statement[]): number {
+    let total = this.protoHashes.get(ValueKind.Function) ?? 0 + body.length;
+    for (let i = 0; i < params.length; i += 1) {
+      total += this.hashString(params[i]);
+    }
+    return total;
+  }
+
+  private hashCode(value: Value): number {
+    switch (value.kind) {
+      case ValueKind.Number:
+        return value.value;
+      case ValueKind.Boolean:
+        return this.hashBoolean(value.value);
+      case ValueKind.String:
+        return this.hashString(value.value);
+      case ValueKind.List:
+        return this.hashList(value.value);
+      case ValueKind.Object:
+        return this.hashObject(value.value);
+      case ValueKind.None:
+        return 0;
+      case ValueKind.Function:
+        return this.hashFunction(value.value.params.subject, value.value.body);
+      case ValueKind.Builtin:
+        return -1;
+    }
+  }
+
+  private initHashes() {
+    for (const [key, value] of this.protos.entries()) {
+      this.protoHashes.set(key, this.hashCode(value));
+    }
+  }
+
+  public init(root: string) {
+    //
+
+    this.resolver = new Resolver(root);
+    this.global.set(
+      "import",
+      intoValue((_self, path) => {
+        const pathStr = this.expectValue(path, ValueKind.String).value;
+        return {
+          kind: ValueKind.Object,
+          value: this.importModule(pathStr),
+        };
+      })
+    );
+    this.global.set(
+      "time",
+      intoValue((_self) => {
+        return intoValue(Date.now());
+      })
+    );
+    this.global.set(
+      "debug",
+      intoValue((_self, ...strs) => {
+        const line = strs
+          .map((val) => this.getPrintableDebugString(val))
+          .join(" ");
+        this.printer.println(line);
+        return NONE;
+      })
+    );
     this.global.set(
       "__println__",
       intoValue((_self, ...strs) => {
@@ -123,8 +284,27 @@ export class Engine {
         };
       },
     });
+    this.global.set(
+      "instance_of",
+      intoValue((_self, a = NONE, b = NONE) => {
+        if (a.kind === ValueKind.Object) {
+          return intoValue(a.value.instanceOf(b));
+        } else {
+          const proto = this.protos.get(a.kind) ?? NONE;
+          return intoValue(this.evaluateEquals(proto, b));
+        }
+      })
+    );
+
+    this.global.set(
+      "hash_code",
+      intoValue((_self, val = NONE) => {
+        return intoValue(this.hashCode(val));
+      })
+    );
 
     this.defineProtos();
+    this.initHashes();
 
     this.executeCore("core/class.rsc", classSrc);
     this.executeCore("core/io.rsc", ioSrc);
@@ -146,22 +326,69 @@ export class Engine {
         return fib(num);
       })
     );
+
+    this.global.set(
+      "__dump_context__",
+      intoValue(() => {
+        console.log(this.context);
+        return NONE;
+      })
+    );
+  }
+
+  private stringify(value: Value): string {
+    const res = this.tryCallMethod(value, "to_string", []);
+
+    if (res === null) {
+      return valueToString(value);
+    } else if (res.kind === ValueKind.String) {
+      return res.value;
+    } else {
+      return this.stringify(res);
+    }
   }
 
   private createNumberProto(): Value {
-    return intoValue({});
+    return intoValue({
+      __name__: "Number",
+      plus: (self, other = NONE) =>
+        this.evaluateNumericValue(self, other, (x, y) => x + y),
+      minus: (self, other = NONE) =>
+        this.evaluateNumericValue(self, other, (x, y) => x - y),
+      times: (self, other = NONE) =>
+        this.evaluateNumericValue(self, other, (x, y) => x * y),
+      divide: (self, other = NONE) =>
+        this.evaluateNumericValue(self, other, (x, y) => x / y),
+      modulo: (self, other = NONE) =>
+        this.evaluateNumericValue(self, other, (x, y) => x % y),
+      exponentiate: (self, other = NONE) =>
+        this.evaluateNumericValue(self, other, (x, y) => x ** y),
+    });
   }
 
   private createBooleanProto(): Value {
-    return intoValue({});
+    return intoValue({
+      __name__: "Boolean",
+      // to_string: () => intoValue("Boolean"),
+    });
   }
 
   private createStringProto(): Value {
-    return intoValue({});
+    return intoValue({
+      __name__: "String",
+      plus: (self, other = NONE) => {
+        const left = this.expectValue(self, ValueKind.String).value;
+        const right = this.getPrintableString(other);
+        return this.string(left + right);
+      },
+    });
   }
 
   private createFunctionProto(): Value {
-    return intoValue({});
+    return intoValue({
+      __name__: "Function",
+      // to_string: () => intoValue("Function"),
+    });
   }
 
   private expectValue<K>(
@@ -172,12 +399,13 @@ export class Engine {
       return val as Extract<Value, { kind: K }>;
     }
     throw this.createError(
-      `value failed to match: ${valueToString(val ?? NONE)}, ${kind}`
+      `value failed to match: ${this.stringify(val ?? NONE)}, ${kind}`
     );
   }
 
   private createListProto(): Value {
     return intoValue({
+      __name__: "List",
       index_get: (self: Value, index: Value | undefined) => {
         const selfList = this.expectValue(self, ValueKind.List).value;
         const indexNum = this.expectValue(index, ValueKind.Number).value;
@@ -224,18 +452,26 @@ export class Engine {
     });
   }
 
+  private createObjectProto(): Value {
+    return intoValue({
+      __name__: "Object",
+    });
+  }
+
   private defineProtos() {
     const numProto = this.createNumberProto();
     const boolProto = this.createBooleanProto();
     const strProto = this.createStringProto();
     const listProto = this.createListProto();
     const fnProto = this.createFunctionProto();
+    const objProto = this.createObjectProto();
 
-    this.global.set("Number", numProto);
-    this.global.set("Boolean", boolProto);
-    this.global.set("String", strProto);
-    this.global.set("List", listProto);
-    this.global.set("Function", fnProto);
+    this.defineProto(numProto, "Number");
+    this.defineProto(boolProto, "Boolean");
+    this.defineProto(strProto, "String");
+    this.defineProto(listProto, "List");
+    this.defineProto(fnProto, "Function");
+    this.defineProto(objProto, "Object");
 
     this.protos.set(ValueKind.Number, numProto);
     this.protos.set(ValueKind.Boolean, boolProto);
@@ -243,10 +479,21 @@ export class Engine {
     this.protos.set(ValueKind.List, listProto);
     this.protos.set(ValueKind.Function, fnProto);
     this.protos.set(ValueKind.Builtin, fnProto);
+    this.protos.set(ValueKind.Object, objProto);
+  }
+
+  private createObject(proto?: ObjectValue): ObjectValue {
+    proto ??= (
+      this.protos.get(ValueKind.Object) as Extract<
+        Value,
+        { kind: ValueKind.Object }
+      >
+    ).value;
+    return ObjectValue.create(proto);
   }
 
   public executeModule(name: string, src: string): ObjectValue {
-    const mod = new ObjectValue();
+    const mod = this.createObject();
     this.srcMap.set(name, src);
     const parser = new Parser(name, src);
     const body = parser.tryParseSource();
@@ -270,7 +517,7 @@ export class Engine {
     if (line.kind === ValueKind.String) {
       this.printer.println(line.value);
     } else {
-      this.printer.println(valueToString(line));
+      this.printer.println(this.stringify(line));
     }
   }
 
@@ -372,8 +619,20 @@ export class Engine {
     rhs: Expression,
     op: (x: number, y: number) => number
   ): Value {
-    const left = this.expectValue(this.evaluate(lhs), ValueKind.Number);
-    const right = this.expectValue(this.evaluate(rhs), ValueKind.Number);
+    return this.evaluateNumericValue(
+      this.evaluate(lhs),
+      this.evaluate(rhs),
+      op
+    );
+  }
+
+  private evaluateNumericValue(
+    lhs: Value,
+    rhs: Value,
+    op: (x: number, y: number) => number
+  ): Value {
+    const left = this.expectValue(lhs, ValueKind.Number);
+    const right = this.expectValue(rhs, ValueKind.Number);
     return this.number(op(left.value, right.value));
   }
 
@@ -388,6 +647,11 @@ export class Engine {
   }
 
   private evaluateEquals(x: Value, y: Value): boolean {
+    const res = this.tryCallMethod(x, "equals", [y]);
+    if (res !== null) {
+      return this.expectValue(res, ValueKind.Boolean).value;
+    }
+
     if (x.kind === ValueKind.None && y.kind === ValueKind.None) {
       return true;
     }
@@ -403,22 +667,14 @@ export class Engine {
     rhs: Expression
   ): Value {
     switch (op) {
+      case BinaryOperator.RefEquals:
+        return this.boolean(this.evaluate(lhs) === this.evaluate(rhs));
+      case BinaryOperator.NotRefEquals:
+        return this.boolean(this.evaluate(lhs) !== this.evaluate(rhs));
       case BinaryOperator.And:
         return this.evaluateAnd(lhs, rhs);
       case BinaryOperator.Or:
         return this.evaluateOr(lhs, rhs);
-      case BinaryOperator.Plus:
-        return this.evaluateNumeric(lhs, rhs, (x, y) => x + y);
-      case BinaryOperator.Minus:
-        return this.evaluateNumeric(lhs, rhs, (x, y) => x - y);
-      case BinaryOperator.Times:
-        return this.evaluateNumeric(lhs, rhs, (x, y) => x * y);
-      case BinaryOperator.Divide:
-        return this.evaluateNumeric(lhs, rhs, (x, y) => x / y);
-      case BinaryOperator.Modulo:
-        return this.evaluateNumeric(lhs, rhs, (x, y) => x % y);
-      case BinaryOperator.Raise:
-        return this.evaluateNumeric(lhs, rhs, (x, y) => x ** y);
       case BinaryOperator.Greater:
         return this.evaluateNumericBoolean(lhs, rhs, (x, y) => x > y);
       case BinaryOperator.GreaterEqual:
@@ -436,6 +692,13 @@ export class Engine {
           !this.evaluateEquals(this.evaluate(lhs), this.evaluate(rhs))
         );
       default:
+        // Check for operator method
+        const method = this.operatorMethods.get(op);
+        if (method) {
+          const left = this.evaluate(lhs);
+          const right = this.evaluate(rhs);
+          return this.callMethod(left, method, [right]);
+        }
         throw this.createError(`unknown operator: ${op}`);
     }
   }
@@ -455,13 +718,29 @@ export class Engine {
     return lambda;
   }
 
+  private tryCallMethod(
+    subject: Value,
+    method: string,
+    args: Value[],
+    isOption: boolean = false,
+    span?: Span
+  ): Value | null {
+    const res = this.tryGetMember(subject, method, isOption, span);
+    if (res !== null) {
+      const [value, self] = res;
+      return this.call(value, self, args);
+    }
+    return null;
+  }
+
   private callMethod(
     subject: Value,
     method: string,
     args: Value[],
+    isOption: boolean = false,
     span?: Span
   ): Value {
-    const [value, self] = this.getMember(subject, method, span);
+    const [value, self] = this.getMember(subject, method, isOption, span);
     return this.call(value, self, args);
   }
 
@@ -490,6 +769,7 @@ export class Engine {
     args: Value[]
   ): Value {
     this.returnRegister = undefined;
+    this.context.descend();
     const oldContext = this.context;
     const newContext = context.getSnapshot();
     try {
@@ -502,7 +782,9 @@ export class Engine {
         newContext.parentContext = selfLayer;
         selfLayer.parentContext = oldContext;
       }
+
       this.context = newContext;
+      this.context.descend();
 
       // Define arguments
 
@@ -529,6 +811,7 @@ export class Engine {
       this.executeBlock(State.Block, body);
     } finally {
       this.context = oldContext;
+      this.context.ascend();
     }
     return this.returnRegister ?? NONE;
   }
@@ -569,7 +852,7 @@ export class Engine {
   }
 
   private evaluateObject(fields: [string, Expression][]): Value {
-    const obj = new ObjectValue();
+    const obj = this.createObject();
 
     for (const [field, expr] of fields) {
       const value = this.evaluate(expr);
@@ -600,36 +883,63 @@ export class Engine {
     };
   }
 
-  private getMember(
+  private tryGetMember(
     subject: Value,
     field: string,
+    isOption: boolean,
     span?: Span
-  ): [Value, Value] {
-    const constProto = this.protos.get(subject.kind);
-    let object =
-      constProto?.kind === ValueKind.Object ? constProto.value : undefined;
+  ): [Value, Value] | null {
+    if (isOption && subject.kind === ValueKind.None) {
+      return [NONE, subject];
+    }
 
-    if (!(subject.kind === ValueKind.Object || object)) {
-      throw this.createError("no object or prototype");
+    let object: ObjectValue | null = null;
+    if (subject.kind === ValueKind.Object) {
+      object = subject.value;
+    } else {
+      const proto = this.protos.get(subject.kind);
+      object = proto?.kind === ValueKind.Object ? proto.value : null;
+    }
+
+    if (!object) {
+      return null;
+      // throw this.createError("no object or prototype");
     }
 
     object ??= (subject as Extract<Value, { kind: ValueKind.Object }>).value;
 
     const value = object.get(field);
     if (value === undefined) {
-      throw this.createError("field not found: " + field);
+      return null;
     }
     return [value, subject];
   }
 
-  private evaluateMember(subject: Expression, field: string): [Value, Value] {
+  private getMember(
+    subject: Value,
+    field: string,
+    isOption: boolean,
+    span?: Span
+  ): [Value, Value] {
+    const res = this.tryGetMember(subject, field, isOption, span);
+    if (res === null) {
+      throw this.createError("field not found: " + field);
+    }
+    return res;
+  }
+
+  private evaluateMember(
+    subject: Expression,
+    field: string,
+    isOption: boolean
+  ): [Value, Value] {
     const obj = this.evaluate(subject, true);
-    return this.getMember(obj, field, subject.span);
+    return this.getMember(obj, field, isOption, subject.span);
   }
 
   private evaluateIndex(
     subject: Expression,
-    _isOption: boolean,
+    isOption: boolean,
     index: Expression
   ): Value {
     const subjectValue = this.evaluate(subject, true);
@@ -638,6 +948,7 @@ export class Engine {
       subjectValue,
       "index_get",
       [indexValue],
+      isOption,
       subject.span
     );
   }
@@ -715,7 +1026,8 @@ export class Engine {
         case ExpressionKind.Member:
           res = this.evaluateMember(
             expr.data.value.subject,
-            expr.data.value.member
+            expr.data.value.member,
+            expr.data.value.isOption
           );
           break;
         case ExpressionKind.Index:
@@ -739,9 +1051,9 @@ export class Engine {
       // console.error(this.getStackTrace());
       throw ex;
     } finally {
-    }
-    if (!isAlsoStatement) {
-      this.runStack.pop();
+      if (!isAlsoStatement) {
+        this.runStack.pop();
+      }
     }
     return res;
   }
@@ -877,13 +1189,39 @@ export class Engine {
   }
 
   private executeLoop(state: State, body: Statement[]): State {
+    const originalState = state;
     while (true) {
-      state = this.executeBlock(state, body);
-      if (state === State.Break || state === State.Return) {
+      state = this.executeBlock(State.Block, body);
+      if (state === State.Break) {
+        break;
+      }
+      if (state === State.Return) {
+        return state;
+      }
+    }
+    return originalState;
+  }
+
+  private getTruth(value: Value): boolean {
+    return this.expectValue(value, ValueKind.Boolean).value;
+  }
+
+  private executeWhile(
+    state: State,
+    condition: Expression,
+    body: Statement[]
+  ): State {
+    const originalState = state;
+    while (true) {
+      state = this.executeBlock(State.Block, body);
+      if (state === State.Return) {
+        return state;
+      }
+      if (state === State.Break || !this.getTruth(this.evaluate(condition))) {
         break;
       }
     }
-    return state;
+    return originalState;
   }
 
   private executeForLoop(
@@ -951,12 +1289,21 @@ export class Engine {
             data.value.body
           );
           break;
+        case StatementKind.While:
+          state = this.executeWhile(
+            state,
+            data.value.condition,
+            data.value.body
+          );
+          break;
         case StatementKind.Return:
           state = this.executeReturn(state, data.value);
           break;
         case StatementKind.Break:
           if (state === State.Block) {
             state = State.Break;
+          } else {
+            throw this.createError("unexpected break");
           }
           break;
       }

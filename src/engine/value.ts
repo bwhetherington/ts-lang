@@ -2,14 +2,14 @@ import { Spread, Statement } from "../parser/parser";
 import { Context } from "./context";
 
 export enum ValueKind {
-  Number = "Number",
-  Boolean = "Boolean",
-  String = "String",
-  Object = "Object",
-  None = "None",
-  Builtin = "Builtin",
-  Function = "Function",
-  List = "List",
+  Number,
+  Boolean,
+  String,
+  Object,
+  None,
+  Builtin,
+  Function,
+  List,
 }
 
 export type Value =
@@ -148,6 +148,10 @@ export class ObjectValue {
     return objVal;
   }
 
+  public *entries(): Iterable<[string, Value]> {
+    yield* this.data.entries();
+  }
+
   public copy(): ObjectValue {
     const obj = ObjectValue.create(this.proto);
     for (const [key, value] of this.data) {
@@ -163,12 +167,32 @@ export class ObjectValue {
     return newObj;
   }
 
+  private instanceOfObject(other: ObjectValue) {
+    if (this.proto === undefined) {
+      return false;
+    }
+    return (
+      this.proto === other || (this.proto?.instanceOfObject(other) ?? false)
+    );
+  }
+
+  public instanceOf(other: Value): boolean {
+    if (other.kind !== ValueKind.Object) {
+      return false;
+    }
+    return this.instanceOfObject(other.value);
+  }
+
   public getSuper(): Optional<ObjectValue> {
     if (this.proto) {
       const obj = ObjectValue.create(this.proto.proto);
       obj.data = this.data;
       return obj;
     }
+  }
+
+  private shallowGet(key: string): Optional<Value> {
+    return this.data.get(key);
   }
 
   public get(key: string): Optional<Value> {
@@ -188,18 +212,22 @@ export class ObjectValue {
   }
 
   public toString(): string {
-    let out = "{";
+    const nameTag = this.shallowGet("__name__");
+    if (nameTag?.kind === ValueKind.String) {
+      return nameTag.value;
+    }
+    let out = "";
+    if (this.proto) {
+      out += this.proto.toString();
+    }
+    out += "{";
+    let fieldsDefined = 0;
     for (const [field, value] of this.data) {
-      if (out.length > 1) {
+      if (fieldsDefined > 0) {
         out += ",";
       }
       out += field + ":" + valueToString(value);
-    }
-    if (this.proto) {
-      if (out.length > 1) {
-        out += ",";
-      }
-      out += "proto:" + this.proto.toString();
+      fieldsDefined += 1;
     }
     return out + "}";
   }
